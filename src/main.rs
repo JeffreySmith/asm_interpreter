@@ -1,9 +1,10 @@
 #![deny(clippy::pedantic)]
-use crate::interpreter::Value;
+use crate::value::Value;
 use interpreter::Interpreter;
 mod ast;
 mod ast_builder;
 mod interpreter;
+mod value;
 
 fn main() {
     let source = r#"
@@ -32,16 +33,15 @@ END:
     if let Ok(program) = result {
         let mut interpreter = Interpreter::new();
         interpreter.check(&program);
-        for (key, value) in &interpreter.constants {
-            println!("{key} : {value:?}");
-        }
-        for (name, position) in &interpreter.labels {
-            println!("{name} : {position}");
-        }
-        let result =
+
+        /*let result =
             interpreter.execute_set(Value::Number(100), &ast::Operand::Memory("100".to_string()));
         match result {
-            Ok(()) => println!("Value is: {:?}", interpreter.memory[100]),
+            Ok(()) => {
+                let memory = interpreter.memory.read().unwrap();
+
+                println!("Value is: {:?}", memory[100]);
+            }
             Err(e) => eprintln!("Error: {e}"),
         }
         let result = interpreter.execute_set(
@@ -49,20 +49,23 @@ END:
             &ast::Operand::Register("r4".to_string()),
         );
         match result {
-            Ok(()) => println!("Value is: {:?}", interpreter.registers.get("r4")),
+            Ok(()) => {
+                let registers = interpreter.registers.read().unwrap();
+                println!("Value is: {:?}", registers.get("r4"));
+            }
             Err(e) => eprintln!("Error: {e}"),
         }
-        println!(
-            "Value of r2 is: '{:?}' before move",
-            interpreter.registers.get("r2")
-        );
         let result = interpreter.execute_move(
             &ast::Operand::Register("r4".to_string()),
             &ast::Operand::Register("r2".to_string()),
         );
         match result {
-            Ok(()) => println!("Value is: {:?}", interpreter.registers.get("r2")),
+            Ok(()) => {
+                let registers = interpreter.registers.read().unwrap();
+                println!("Value is: {:?}", registers.get("r2"));
+            }
             Err(e) => eprintln!("Error: {e}"),
         }
+        */
     }
 }
