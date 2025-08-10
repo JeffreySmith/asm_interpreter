@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "asm_interpreter"
+version = "0.2.0"
+dependencies = [
+ "pest",
+ "pest_derive",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -110,14 +118,6 @@ checksum = "edd1101f170f5903fde0914f899bb503d9ff5271d7ba76bbb70bea63690cc0d5"
 dependencies = [
  "pest",
  "sha2",
-]
-
-[[package]]
-name = "pest_test"
-version = "0.1.0"
-dependencies = [
- "pest",
- "pest_derive",
 ]
 
 [[package]]
