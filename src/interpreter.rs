@@ -650,15 +650,15 @@ mod tests {
     #[test]
     fn test_set_and_get_and_clear_memory() {
         let mut interpreter = Interpreter::new();
-        set_mem(&mut interpreter, "100", Value::String("abc".to_string()));
+        set_mem(&mut interpreter, "%100", Value::String("abc".to_string()));
         let v = get_mem(&interpreter, 100);
         assert_eq!(v, Some(Value::String("abc".to_string())));
 
-        set_mem(&mut interpreter, "100", Value::Number(100));
+        set_mem(&mut interpreter, "%100", Value::Number(100));
         let v = get_mem(&interpreter, 100);
         assert_eq!(v, Some(Value::Number(100)));
 
-        clear_mem(&mut interpreter, "100");
+        clear_mem(&mut interpreter, "%100");
         assert_eq!(get_mem(&interpreter, 100).unwrap(), Value::default());
     }
 
@@ -768,13 +768,13 @@ mod tests {
     #[test]
     fn test_execute_add_memory_numbers() {
         let mut interpreter = Interpreter::new();
-        set_mem(&mut interpreter, "0xff", Value::Number(-50));
-        set_mem(&mut interpreter, "250", Value::Number(100));
+        set_mem(&mut interpreter, "%0xff", Value::Number(-50));
+        set_mem(&mut interpreter, "%250", Value::Number(100));
 
         interpreter
             .execute_add(
-                &ast::Operand::Memory("250".to_string()),
-                &ast::Operand::Memory("0xFF".to_string()),
+                &ast::Operand::Memory("%250".to_string()),
+                &ast::Operand::Memory("%0xFF".to_string()),
             )
             .unwrap();
         assert_eq!(get_reg(&interpreter, "a"), Some(Value::Number(50)));
@@ -784,15 +784,19 @@ mod tests {
         let mut interpreter = Interpreter::new();
         set_mem(
             &mut interpreter,
-            "0xff",
+            "%0xff",
             Value::String("hello,".to_string()),
         );
-        set_mem(&mut interpreter, "250", Value::String(" there".to_string()));
+        set_mem(
+            &mut interpreter,
+            "%250",
+            Value::String(" there".to_string()),
+        );
 
         interpreter
             .execute_add(
-                &ast::Operand::Memory("0xFF".to_string()),
-                &ast::Operand::Memory("250".to_string()),
+                &ast::Operand::Memory("%0xFF".to_string()),
+                &ast::Operand::Memory("%250".to_string()),
             )
             .unwrap();
         assert_eq!(
