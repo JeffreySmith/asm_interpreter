@@ -4,6 +4,7 @@ use crate::ast::{Comparison, ComparisonOp, Instruction, Operand, Statement};
 use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;
+use std::fmt;
 
 #[derive(Parser)]
 #[grammar = "asm.pest"]
@@ -11,40 +12,63 @@ pub struct ASMParser;
 
 #[derive(Debug)]
 pub enum ParseError {
-    UnexpectedToken,
-    Invalid,
+    Pest(String),
+    UnexpectedToken { token: String, position: usize },
+    Invalid { message: String, position: usize },
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnexpectedToken { token, position } => {
+                write!(f, "Unexpected token '{token}' at position {position}")
+            }
+            ParseError::Invalid { message, position } => {
+                write!(f, "Invalid: {message} at position {position}")
+            }
+            ParseError::Pest(s) => write!(f, "{s}"),
+        }
+    }
 }
 
 fn next_operand<'a, I>(inner: &mut I) -> Operand
 where
     I: Iterator<Item = pest::iterators::Pair<'a, Rule>>,
 {
-    operand_from_pair(inner.next().expect("Expected operand"))
+    operand_from_pair(inner.next().expect("Expected operand")).expect("")
 }
 
-fn operand_from_pair(pair: Pair<Rule>) -> Operand {
+fn operand_from_pair(pair: Pair<Rule>) -> Result<Operand, String> {
     match pair.as_rule() {
         Rule::OPERAND => {
-            let inner = pair.into_inner().next().expect("OPERAND should exist");
+            let inner = pair
+                .into_inner()
+                .next()
+                .ok_or_else(|| "Couldn't find any more operands")?;
             operand_from_pair(inner)
         }
-        Rule::REGISTER => Operand::Register(pair.as_str().to_string()),
-        Rule::MEMORYADDRESS => Operand::Memory(pair.as_str().to_string()),
-        Rule::NUMBER => Operand::Number(pair.as_str().to_string()),
-        Rule::IDENTIFIER => Operand::Identifier(pair.as_str().to_string()),
-        Rule::STRING => Operand::String(pair.as_str().to_string()),
-        Rule::CHARACTER => Operand::Character(pair.as_str().to_string()),
-        Rule::CONSTANT => Operand::Constant(pair.as_str().to_string()),
-        _ => {
-            panic!("Unknown operand type: {:?}", pair.as_rule())
+        Rule::REGISTER => Ok(Operand::Register(pair.as_str().to_string())),
+        Rule::MEMORYADDRESS => Ok(Operand::Memory(pair.as_str().to_string())),
+        Rule::INDIRECTADDRESS => {
+            let name = pair.as_str();
+            let parsed_name = name
+                .strip_prefix('%')
+                .ok_or_else(|| format!("'{name}' is not a valid indirect address"))?;
+            Ok(Operand::Register(parsed_name.to_string()))
         }
+        Rule::NUMBER => Ok(Operand::Number(pair.as_str().to_string())),
+        Rule::IDENTIFIER => Ok(Operand::Identifier(pair.as_str().to_string())),
+        Rule::STRING => Ok(Operand::String(pair.as_str().to_string())),
+        Rule::CHARACTER => Ok(Operand::Character(pair.as_str().to_string())),
+        Rule::CONSTANT => Ok(Operand::Constant(pair.as_str().to_string())),
+        _ => Err(format!("Unknown operand type: {:?}", pair.as_rule())),
     }
 }
-fn comparison_from_pair(pair: Pair<Rule>) -> Comparison {
+fn comparison_from_pair(pair: Pair<Rule>) -> Result<Comparison, String> {
     let mut inner = pair.into_inner();
-    let left = operand_from_pair(inner.next().expect("Expected left for equality"));
+    let left = operand_from_pair(inner.next().ok_or_else(|| "Expected left for equality")?)?;
 
-    let op_pair = inner.next().expect("Missing comparison");
+    let op_pair = inner.next().ok_or_else(|| "Expected equality")?;
     let equality = match op_pair.as_str() {
         "=" => ComparisonOp::Eq,
         "!=" => ComparisonOp::Ne,
@@ -55,13 +79,13 @@ fn comparison_from_pair(pair: Pair<Rule>) -> Comparison {
         _ => panic!("Unknown comparison"),
     };
 
-    let right = operand_from_pair(inner.next().expect("Expected right for equality"));
+    let right = operand_from_pair(inner.next().ok_or_else(|| "Expected right for equality")?)?;
 
-    Comparison {
+    Ok(Comparison {
         left,
         equality,
         right,
-    }
+    })
 }
 
 pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
@@ -99,8 +123,14 @@ pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
             Statement::Instruction(Instruction::Push { src })
         }
         Rule::OPPOP => {
-            let dest = inner.next().map(|pair| operand_from_pair(pair));
-            Statement::Instruction(Instruction::Pop { dest })
+            let dest = inner.next().map(|pair| operand_from_pair(pair).ok());
+            if let Some(Some(_)) = dest {
+                Statement::Instruction(Instruction::Pop {
+                    dest: dest.unwrap(),
+                })
+            } else {
+                Statement::Instruction(Instruction::Pop { dest: None })
+            }
         }
 
         Rule::ADD => {
@@ -154,7 +184,17 @@ pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
         Rule::JUMP => {
             let target = next_operand(&mut inner);
             let comparison = inner.next().map(comparison_from_pair);
-            Statement::Instruction(Instruction::Jmp { target, comparison })
+            if let Some(Ok(_)) = comparison {
+                Statement::Instruction(Instruction::Jmp {
+                    target,
+                    comparison: comparison.unwrap().ok(),
+                })
+            } else {
+                Statement::Instruction(Instruction::Jmp {
+                    target,
+                    comparison: None,
+                })
+            }
         }
         Rule::CALL => {
             let target = next_operand(&mut inner);
@@ -162,7 +202,11 @@ pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
         }
         Rule::RET => Statement::Instruction(Instruction::Ret),
         Rule::HALT => Statement::Instruction(Instruction::Halt),
-
+        Rule::STORE => {
+            let value = next_operand(&mut inner);
+            let dest = next_operand(&mut inner);
+            Statement::Instruction(Instruction::Store { value, dest })
+        }
         _ => unimplemented!(),
     }
 }
@@ -170,16 +214,20 @@ pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
 pub fn parse_program(contents: &str) -> Result<Vec<Statement>, ParseError> {
     let mut statements: Vec<Statement> = Vec::new();
     let parse_results = ASMParser::parse(Rule::program, contents);
-    if let Ok(pairs) = parse_results {
-        for pair in pairs {
-            if pair.as_rule() == Rule::EOI {
-                continue;
+    match parse_results {
+        Ok(pairs) => {
+            for pair in pairs {
+                if pair.as_rule() == Rule::EOI {
+                    continue;
+                }
+                let statement = statement_from_pair(&pair);
+                statements.push(statement);
             }
-            let statement = statement_from_pair(&pair);
-            statements.push(statement);
+            //Ok(statements)
         }
-    } else {
-        return Err(ParseError::Invalid);
+        Err(e) => {
+            return Err(ParseError::Pest(format!("{e:?}")));
+        }
     }
     Ok(statements)
 }

@@ -1,12 +1,12 @@
 program  = _{ SOI ~ LINE* ~ EOI }
 LINE     = _{ ((LABEL | STATEMENT) ~ TRAILING | BLANKLINE | COMMENTLINE) }
 
-STATEMENT = _{ DEFINE | LOAD | STORE | OPPUSH | OPPOP | MOVE | ADD | SUB | MUL | DIV | DEC | INC | OR | NOT | XOR | JUMP | CALL | RET | CLEAR  | HALT | SET }
-LOAD      = { ("load" | "LOAD") ~ MEMORYADDRESS ~ "," ~ REGISTER }
-STORE     = { ("store" | "STORE") ~ REGISTER ~ "," ~ MEMORYADDRESS }
+STATEMENT = _{ DEFINE | LOAD | STORE | OPPUSH | OPPOP | MOVE | ADD | SUB | MUL | DIV | DEC | INC | OR | NOT | XOR | JUMP | CALL | RET | CLEAR  | HALT | SET | STORE}
+LOAD      = { ("load" | "LOAD") ~ (MEMORYADDRESS | INDIRECTADDRESS ) ~ "," ~ REGISTER }
+STORE     = { ("store" | "STORE") ~ REGISTER ~ "," ~ (MEMORYADDRESS | INDIRECTADDRESS)}
 OPPUSH    = { ("push" | "PUSH") ~ (MATHOP | STRING | CHARACTER) }
 OPPOP     = { ("pop" | "POP") ~ REGISTER? }
-MOVE      = { ("mov" | "MOV") ~ (REGISTER | MEMORYADDRESS | STRING | CHARACTER) ~ "," ~ (REGISTER | MEMORYADDRESS) }
+MOVE      = { ("mov" | "MOV") ~ (REGISTER | MEMORYADDRESS | INDIRECTADDRESS | STRING | CHARACTER) ~ "," ~ (REGISTER | MEMORYADDRESS | INDIRECTADDRESS) }
 ADD       = { ("add" | "ADD") ~ MATHOP ~ "," ~ MATHOP }
 SUB       = { ("sub" | "SUB") ~ MATHOP ~ "," ~ MATHOP }
 MUL       = { ("mul" | "MUL") ~ MATHOP ~ "," ~ MATHOP }
@@ -17,7 +17,7 @@ AND       = { ("and" | "AND") ~ OPERAND ~ "," ~ OPERAND}
 OR        = { ("or" | "OR") ~ OPERAND ~ "," ~ OPERAND}
 XOR       = { ("xor" | "XOR") ~ OPERAND ~ "," ~ OPERAND}
 NOT       = { ("not" | "NOT") ~ OPERAND}
-JUMP      = { ("jmp" | "JMP") ~ (MEMORYADDRESS | IDENTIFIER) ~ COMPARISON? }
+JUMP      = { ("jmp" | "JMP") ~ (MEMORYADDRESS | INDIRECTADDRESS | IDENTIFIER) ~ COMPARISON? }
 CALL      = { ("call" | "CALL") ~ IDENTIFIER }
 RET       = { ("ret" | "RET") }
 CLEAR     = { ("clear" | "CLEAR") ~ (REGISTER | MEMORYADDRESS) }
@@ -26,14 +26,15 @@ SET       = { ("set" | "SET" ) ~ (REGISTER | MEMORYADDRESS) ~ "," ~ INSTANTTYPE}
 COMPARISON   = { OPERAND ~ EQUALITY ~ OPERAND}
 EQUALITY     = { ("<" | "<=" | "=" | ">" | ">=") }
 
-MATHOP        = _{ REGISTER | MEMORYADDRESS | NUMBER | CONSTANT}
+MATHOP        = _{ REGISTER | MEMORYADDRESS | INDIRECTADDRESS | NUMBER | CONSTANT}
 INSTANTTYPE   = _{ (NUMBER | STRING | CONSTANT | CHARACTER) }
-OPERAND       = { REGISTER | MEMORYADDRESS | NUMBER | IDENTIFIER | STRING | CONSTANT | CHARACTER}
+OPERAND       = { REGISTER | MEMORYADDRESS | INDIRECTADDRESS | NUMBER | IDENTIFIER | STRING | CONSTANT | CHARACTER}
 REGISTER      = @{ (("R" | "r") ~ ASCII_OCT_DIGIT) | ACCUMULATOR | FLAGS | SP }
 ACCUMULATOR   = { "A" | "a" }
 FLAGS         = { "F" | "f" }
 SP            = { "SP" | "sp"}
-MEMORYADDRESS = @{ "%" ~ (NUMBER | REGISTER) }
+MEMORYADDRESS = @{ "%" ~ NUMBER  }
+INDIRECTADDRESS = @{ "%" ~ REGISTER}
 NUMBER        = @{ (HEX | BINARY | ASCII_DIGIT+) }
 HEX           = @{ "0" ~ ("x" | "X") ~ ASCII_HEX_DIGIT+ }
 BINARY        = @{ "0" ~ ("b" | "B") ~ ASCII_BIN_DIGIT+ }
@@ -43,8 +44,8 @@ DEFINE     = { ("define" | "DEFINE") ~ CONSTANT ~ (NUMBER | STRING | CHARACTER)}
 IDENTIFIER = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHA | ASCII_DIGIT | "_" | "-")* }
 
 STRING    = @{ "\"" ~ (!("\"" | NEWLINE) ~ CHAR)* ~ "\"" }
-CHARACTER = _{ "'" ~ (!(NEWLINE) ~ CHAR)? ~ "'" }
-CHAR      = { ANY }
+CHARACTER = { "'" ~ (!(NEWLINE) ~ CHAR)? ~ "'" }
+CHAR      = _{ ANY }
 
 LABEL =  { IDENTIFIER ~ COLON }
 COLON = _{ ":" }

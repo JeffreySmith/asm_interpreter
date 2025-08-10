@@ -11,61 +11,54 @@ fn main() {
 DEFINE .name "Jeffrey"
 define .age 33
 START:
-    SET %0xFF, 1
+    SET %0xFF, 10000
     LOAD %0xFF, R1
     CLEAR R4
-
+    SET A, 1
+    SET %0, 1
+    set %1, 2
+    SET %2, 3
+    SET %3, 4
+    SET %4, 5
 MAIN:
     SUB 100, .age
+    SET %11, "abc"
+    SET %12, 'h'
+    STORE A, %10
     ADD %100, %200
-    ADD r4, 1
-    jmp END r4=106;befg
+    ;ADD R4, 1
+    ;MOV A, R4
+    call add_a_r4
+    jmp END r4=5
     jmp MAIN ; also a comment
     not 10
     ;this is a comment to help, maybe?
+add_a_r4:
+    INC R4
+    ADD A, %R4
+    ret
+    
 END:
+    PUSH 100
+    PUSH 200
     LOAD %R2, R3;load from the address contained in R2
     POP
     POP r7
-    HALT
+    push "abcdefg"
+    SET r6, "abc"
+    jmp IS_FINE r6="abc"
+    halt
+IS_FINE:
+    SET %0xFF, "True"
+
 "#;
-    let result = ast_builder::parse_program(source);
-    if let Ok(program) = result {
-        let mut interpreter = Interpreter::new();
-        interpreter.check(&program);
+    let mut interpreter = Interpreter::new();
+    let result = interpreter.parse(source);
 
-        /*let result =
-            interpreter.execute_set(Value::Number(100), &ast::Operand::Memory("100".to_string()));
-        match result {
-            Ok(()) => {
-                let memory = interpreter.memory.read().unwrap();
-
-                println!("Value is: {:?}", memory[100]);
-            }
-            Err(e) => eprintln!("Error: {e}"),
+    match result {
+        Ok(()) => {
+            interpreter.run();
         }
-        let result = interpreter.execute_set(
-            Value::Number(-50),
-            &ast::Operand::Register("r4".to_string()),
-        );
-        match result {
-            Ok(()) => {
-                let registers = interpreter.registers.read().unwrap();
-                println!("Value is: {:?}", registers.get("r4"));
-            }
-            Err(e) => eprintln!("Error: {e}"),
-        }
-        let result = interpreter.execute_move(
-            &ast::Operand::Register("r4".to_string()),
-            &ast::Operand::Register("r2".to_string()),
-        );
-        match result {
-            Ok(()) => {
-                let registers = interpreter.registers.read().unwrap();
-                println!("Value is: {:?}", registers.get("r2"));
-            }
-            Err(e) => eprintln!("Error: {e}"),
-        }
-        */
+        Err(e) => eprintln!("Failed to parse: {e:?}"),
     }
 }

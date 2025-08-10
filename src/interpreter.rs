@@ -1,5 +1,5 @@
-use crate::Value;
 use crate::ast::{Comparison, Instruction, Operand, Statement};
+use crate::{Value, ast_builder};
 use std::convert::TryInto;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{collections::HashMap, num::ParseIntError, sync::Arc, sync::RwLock};
@@ -11,7 +11,7 @@ const ACC: &str = "a";
 const REGISTERS: [&str; 10] = ["a", "f", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"];
 
 pub struct Interpreter {
-    display: Arc<RwLock<Vec<(i32, i32, i32)>>>,
+    pub display: Arc<RwLock<Vec<(i32, i32, i32)>>>,
     pub registers: Arc<RwLock<HashMap<String, Value>>>,
     pub memory: Arc<RwLock<Vec<Value>>>,
     pub stack: Arc<RwLock<Vec<Value>>>,
@@ -29,6 +29,7 @@ impl Interpreter {
         for reg in REGISTERS {
             registers.insert((*reg).to_string(), Value::default());
         }
+
         Interpreter {
             display: Arc::new(RwLock::new(vec![(0, 0, 0); DISPLAY_PIXELS])),
             registers: Arc::new(RwLock::new(registers)),
@@ -42,8 +43,13 @@ impl Interpreter {
             running: AtomicBool::new(true),
         }
     }
-    pub fn check(&mut self, statements: &[Statement]) {
-        for (i, statement) in statements.iter().enumerate() {
+    pub fn parse(&mut self, contents: &str) -> Result<(), ast_builder::ParseError> {
+        self.statements = ast_builder::parse_program(contents)?;
+        self.compile();
+        Ok(())
+    }
+    fn compile(&mut self) {
+        for (i, statement) in self.statements.iter().enumerate() {
             match statement {
                 Statement::CompileTime(instr) => match instr {
                     Instruction::Define { name, value } => {
@@ -60,9 +66,111 @@ impl Interpreter {
         }
     }
 
-    pub fn execute(&mut self, stmt: &Statement) {
-        println!("{}", self.pc.load(Ordering::SeqCst));
-        println!("{stmt:?}");
+    pub fn run(&mut self) {
+        while self.running.load(Ordering::SeqCst) {
+            let result = self.step();
+            if let Err(e) = result {
+                eprintln!("Error occured: {e}");
+                self.running.store(false, Ordering::SeqCst);
+            }
+            let pc = self.pc.load(Ordering::SeqCst);
+            if pc < self.statements.len() {
+                println!(
+                    "Current instruction: {:#?}",
+                    self.statements[self.pc.load(Ordering::SeqCst)]
+                );
+            }
+        }
+        let stack = self
+            .stack
+            .read()
+            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .unwrap();
+        let registers = self
+            .registers
+            .read()
+            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .unwrap();
+        let memory = self
+            .memory
+            .read()
+            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .unwrap();
+        let call_stack = self
+            .call_stack
+            .read()
+            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .unwrap();
+        println!("Stack: {stack:#?}");
+        println!("\n\nRegisters: {registers:#?}");
+        println!("\n\nMemory: {memory:?}");
+        println!("\n\nCall stack: {call_stack:#?}");
+    }
+
+    pub fn step(&mut self) -> Result<(), String> {
+        let pc = self.pc.load(Ordering::SeqCst);
+        if pc >= self.statements.len() {
+            self.execute_halt();
+            return Ok(());
+        }
+        let mut increment_pc = true;
+        match &self.statements[pc].clone() {
+            Statement::Label(_) | Statement::CompileTime(_) => {}
+            Statement::Instruction(instruction) => match instruction {
+                Instruction::Define { name: _, value: _ } => {}
+                Instruction::Set { value, dest } => {
+                    let val = self
+                        .get_operand_value(value)
+                        .ok_or_else(|| "No value found".to_string())?;
+                    self.execute_set(val, dest)?;
+                }
+                Instruction::Load { src, dest } => self.execute_load(src, dest)?,
+                Instruction::Clear { target } => self.execute_clear(target)?,
+                Instruction::Mov { src, dest } => self.execute_move(src, dest)?,
+                Instruction::Add { left, right } => self.execute_add(left, right)?,
+                Instruction::Sub { left, right } => self.execute_sub(left, right)?,
+                Instruction::Mul { left, right } => self.execute_mul(left, right)?,
+                Instruction::Div { left, right } => self.execute_div(left, right)?,
+                Instruction::Inc { dest } => self.execute_inc(dest)?,
+                Instruction::Dec { dest } => self.execute_dec(dest)?,
+                Instruction::And { left, right } => self.execute_and(left, right)?,
+                Instruction::Or { left, right } => self.execute_or(left, right)?,
+                Instruction::Xor { left, right } => self.execute_xor(left, right)?,
+                Instruction::Not { op } => self.execute_not(op)?,
+                Instruction::Jmp { target, comparison } => {
+                    if let Operand::Identifier(label) = target {
+                        self.execute_jump(label, comparison.as_ref())?;
+                        increment_pc = false;
+                    } else {
+                        return Err(format!("Invalid target '{target:?}'"));
+                    }
+                }
+                Instruction::Call { target } => {
+                    if let Operand::Identifier(label) = target {
+                        self.execute_call(label)?;
+                        increment_pc = false;
+                    } else {
+                        return Err(format!("Invalid target '{target:?}"));
+                    }
+                }
+                Instruction::Ret => {
+                    self.execute_ret()?;
+                    increment_pc = false;
+                }
+                Instruction::Halt => {
+                    self.execute_halt();
+                    increment_pc = false;
+                }
+                Instruction::Push { src } => self.execute_push(src)?,
+                Instruction::Pop { dest } => self.execute_pop(dest.as_ref())?,
+                Instruction::Store { value, dest } => self.execute_store(value, dest)?,
+            },
+        }
+
+        if increment_pc {
+            self.pc.store(pc + 1, Ordering::SeqCst);
+        }
+        Ok(())
     }
 
     fn execute_set(&mut self, value: Value, dest: &Operand) -> Result<(), String> {
@@ -73,9 +181,13 @@ impl Interpreter {
         }
     }
 
-    fn execute_load(&mut self, memory_address: &Operand, register: &Operand) -> Result<(), String> {
-        if let (Operand::Memory(address), Operand::Register(name)) = (memory_address, register) {
-            let value = self.get_address(address)?;
+    fn execute_load(&mut self, src: &Operand, register: &Operand) -> Result<(), String> {
+        let value = match src {
+            Operand::Memory(address) | Operand::Number(address) => self.get_address(address),
+            Operand::Register(reg) => self.get_register(reg),
+            _ => Err(format!("Invalid src for LOAD '{src:#?}'")),
+        }?;
+        if let Operand::Register(name) = register {
             self.set_register(name, value)
         } else {
             Err("Invalid operands used in LOAD".to_string())
@@ -199,18 +311,13 @@ impl Interpreter {
     }
     fn execute_jump(
         &mut self,
-        label: Statement,
-        comparison: Option<Comparison>,
+        label: &String,
+        comparison: Option<&Comparison>,
     ) -> Result<(), String> {
-        let name = match label {
-            Statement::Label(name) => Ok(name),
-            _ => Err(format!("Invalid statement type '{label:?}")),
-        }?;
-
         let idx = self
             .labels
-            .get(&name)
-            .ok_or_else(|| format!("Label '{name}' does not exist"))?;
+            .get(label)
+            .ok_or_else(|| format!("Label '{label}' does not exist"))?;
 
         if let Some(comparison) = comparison {
             let left = self
@@ -219,9 +326,11 @@ impl Interpreter {
             let right = self
                 .get_operand_value(&comparison.right)
                 .ok_or_else(|| format!("Operand {:?} not found", comparison.right))?;
-
+            println!("{left:?} = {right:?} ?");
             let result = Value::compare(&left, &right, &comparison.equality)?;
             if !result {
+                let idx = self.pc.load(Ordering::SeqCst);
+                self.pc.store(idx + 1, Ordering::SeqCst);
                 return Ok(());
             }
         }
@@ -229,15 +338,11 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_call(&mut self, label: Statement) -> Result<(), String> {
-        let name = match label {
-            Statement::Label(name) => Ok(name),
-            _ => Err(format!("Invalid statement type '{label:?}'")),
-        }?;
+    fn execute_call(&mut self, label: &String) -> Result<(), String> {
         let idx = self
             .labels
-            .get(&name)
-            .ok_or_else(|| format!("Label '{name}' does not exist"))?;
+            .get(label)
+            .ok_or_else(|| format!("Label '{label}' does not exist"))?;
         let mut call_stack = self
             .call_stack
             .write()
@@ -253,20 +358,64 @@ impl Interpreter {
             .write()
             .map_err(|e| format!("Memory lock poisoned: {e}"))?;
 
+        println!("Call stack: {call_stack:?}");
         if let Some(addr) = call_stack.pop() {
-            self.pc.store(addr, Ordering::SeqCst);
+            // return one more than where we started so we don't just call the "function"
+            // infinitely
+            self.pc.store(addr + 1, Ordering::SeqCst);
             Ok(())
         } else {
             Err("Cannot return from a function since the call stack is empty".to_string())
         }
     }
 
-    fn execute_halt(&mut self) -> bool {
+    fn execute_halt(&mut self) {
         if self.running.load(Ordering::SeqCst) {
             self.running.store(false, Ordering::SeqCst);
-            return true;
         }
-        false
+    }
+
+    fn execute_push(&mut self, src: &Operand) -> Result<(), String> {
+        let val = self.get_operand_value(src).unwrap_or_default();
+
+        self.stack
+            .write()
+            .map_err(|e| format!("Memory lock Poisoned: {e}"))?
+            .push(val);
+
+        Ok(())
+    }
+
+    fn execute_pop(&mut self, dest: Option<&Operand>) -> Result<(), String> {
+        let val = {
+            let mut stack = self
+                .stack
+                .write()
+                .map_err(|e| format!("Memory lock poisoned: {e}"))?;
+
+            stack.pop()
+        }
+        .ok_or_else(|| "Stack is empty, cannot pop".to_string())?;
+
+        if let Some(dest) = dest {
+            self.set_operand_value(dest, &val)?;
+        }
+        Ok(())
+    }
+
+    fn execute_store(
+        &mut self,
+        register: &Operand,
+        memory_address: &Operand,
+    ) -> Result<(), String> {
+        let val = match register {
+            Operand::Register(name) => self
+                .get_operand_value(register)
+                .ok_or_else(|| format!("Invalid register '{name}'"))?,
+            _ => return Err("Store must be 'STORE register, memory address'".to_string()),
+        };
+        self.set_operand_value(memory_address, &val)?;
+        Ok(())
     }
 
     fn get_operand_value(&self, operand: &Operand) -> Option<Value> {
@@ -276,7 +425,7 @@ impl Interpreter {
             Operand::Character(c) => Some(Value::String(c.clone())),
             Operand::String(s) => Some(Value::String(s.clone())),
             Operand::Memory(s) => self.get_address(s).ok(),
-            Operand::Register(r) => self.get_register(r).ok(),
+            Operand::Register(r) | Operand::IndirectMemory(r) => self.get_register(r).ok(),
             Operand::Identifier(_) => None,
         }
     }
@@ -284,7 +433,9 @@ impl Interpreter {
     fn set_operand_value(&mut self, operand: &Operand, value: &Value) -> Result<(), String> {
         match operand {
             Operand::Memory(address) => self.set_address(address, value.clone()),
-            Operand::Register(register) => self.set_register(register, value.clone()),
+            Operand::Register(register) | Operand::IndirectMemory(register) => {
+                self.set_register(register, value.clone())
+            }
             Operand::Constant(s) => Err(format!("Cannot change constant {s}")),
             Operand::Identifier(i) => Err(format!("Cannot set identifier {i}")),
 
@@ -294,7 +445,10 @@ impl Interpreter {
         }
     }
 
-    fn get_address(&self, address: &str) -> Result<Value, String> {
+    fn get_address(&self, addr: &str) -> Result<Value, String> {
+        let address = addr
+            .strip_prefix('%')
+            .ok_or_else(|| format!("Invalid address '{addr}'"))?;
         match convert_string_to_num(address) {
             Ok(address) => {
                 let index: usize = address
@@ -315,7 +469,16 @@ impl Interpreter {
     }
 
     fn set_address(&self, address: &str, value: Value) -> Result<(), String> {
-        match convert_string_to_num(address) {
+        let mut address = address.strip_prefix('%').unwrap_or(address).to_string();
+        let reg_address = match self.get_register(&address) {
+            Ok(Value::Number(_)) => Some(self.get_register(&address)?),
+            _ => None,
+        };
+        if let Some(Value::Number(new_address)) = reg_address {
+            address = new_address.to_string();
+        }
+
+        match convert_string_to_num(&address) {
             Ok(address) => {
                 let index: usize = address
                     .try_into()
@@ -339,9 +502,20 @@ impl Interpreter {
             .registers
             .read()
             .map_err(|e| format!("Memory lock Poisoned: {e}"))?;
-        match registers.get(register) {
-            Some(r) => Ok(r.clone()),
-            None => Err(format!("Register '{register}' does not exist")),
+        let reg = register.to_lowercase();
+        if let Some(r) = reg.strip_prefix("%") {
+            match registers.get(r) {
+                Some(Value::Number(addr)) => self.get_address(&addr.to_string()),
+                Some(_) => Err(format!(
+                    "Register '{r}' does not hold a numeric value for indirect access",
+                )),
+                _ => Err(format!("'{r}' invalid")),
+            }
+        } else {
+            match registers.get(&reg) {
+                Some(r) => Ok(r.clone()),
+                None => Err(format!("Register '{register}' does not exist")),
+            }
         }
     }
     fn set_register(&self, register: &str, value: Value) -> Result<(), String> {
@@ -349,12 +523,13 @@ impl Interpreter {
             .registers
             .write()
             .map_err(|e| format!("Memory lock Poisoned: {e}"))?;
-        let exists = registers.get(register);
+        let reg = register.to_lowercase();
+        let exists = registers.get(&reg);
         if exists.is_some() {
-            registers.insert(register.to_string(), value);
+            registers.insert(reg, value);
             Ok(())
         } else {
-            Err(format!("Register '{register}' does not exist"))
+            Err(format!("Register '{reg}' does not exist"))
         }
     }
 }
@@ -365,7 +540,10 @@ fn resolve_operand_compile(operand: &Operand, constants: &HashMap<String, Value>
         Operand::Constant(name) => constants.get(name).cloned(),
         Operand::Character(c) => Some(Value::String(c.clone())),
         Operand::String(s) => Some(Value::String(s.clone())),
-        Operand::Register(_) | Operand::Memory(_) | Operand::Identifier(_) => None,
+        Operand::Register(_)
+        | Operand::Memory(_)
+        | Operand::Identifier(_)
+        | Operand::IndirectMemory(_) => None,
     }
 }
 
@@ -421,6 +599,17 @@ mod tests {
             )
             .unwrap();
     }
+
+    fn clear_reg(interpreter: &mut Interpreter, reg: &str) {
+        interpreter
+            .execute_clear(&ast::Operand::Register(reg.to_string()))
+            .unwrap();
+    }
+    fn clear_mem(interpreter: &mut Interpreter, addr: &str) {
+        interpreter
+            .execute_clear(&ast::Operand::Memory(addr.to_string()))
+            .unwrap();
+    }
     #[test]
     fn test_convert_string_to_num() {
         let cases = vec![
@@ -443,7 +632,7 @@ mod tests {
         }
     }
     #[test]
-    fn test_set_and_get_register() {
+    fn test_set_and_get_and_clear_register() {
         let mut interpreter = Interpreter::new();
         set_reg(&mut interpreter, "r2", Value::Number(42));
 
@@ -453,9 +642,12 @@ mod tests {
         set_reg(&mut interpreter, "r2", Value::String("abc".to_string()));
         let v = get_reg(&interpreter, "r2");
         assert_eq!(v, Some(Value::String("abc".to_string())));
+
+        clear_reg(&mut interpreter, "r2");
+        assert_eq!(get_reg(&interpreter, "r2").unwrap(), Value::default());
     }
     #[test]
-    fn test_set_and_get_memory() {
+    fn test_set_and_get_and_clear_memory() {
         let mut interpreter = Interpreter::new();
         set_mem(&mut interpreter, "100", Value::String("abc".to_string()));
         let v = get_mem(&interpreter, 100);
@@ -464,6 +656,9 @@ mod tests {
         set_mem(&mut interpreter, "100", Value::Number(100));
         let v = get_mem(&interpreter, 100);
         assert_eq!(v, Some(Value::Number(100)));
+
+        clear_mem(&mut interpreter, "100");
+        assert_eq!(get_mem(&interpreter, 100).unwrap(), Value::default());
     }
 
     #[test]
@@ -603,5 +798,28 @@ mod tests {
             get_reg(&interpreter, "a"),
             Some(Value::String("hello, there".to_string()))
         );
+    }
+    #[test]
+    fn test_string_math_operators() {
+        let mut interpreter = Interpreter::new();
+        set_reg(&mut interpreter, "r1", Value::String("Hi".to_string()));
+        interpreter
+            .execute_mul(
+                &ast::Operand::Register("r1".to_string()),
+                &ast::Operand::Number("3".to_string()),
+            )
+            .unwrap();
+        assert_eq!(
+            get_reg(&interpreter, "a"),
+            Some(Value::String("HiHiHi".to_string()))
+        );
+
+        interpreter
+            .execute_div(
+                &ast::Operand::Register("r1".to_string()),
+                &ast::Operand::String("hello".to_string()),
+            )
+            .unwrap();
+        assert_eq!(get_reg(&interpreter, "a"), Some(Value::Number(-3)));
     }
 }

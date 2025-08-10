@@ -95,6 +95,7 @@ pub enum Instruction {
 pub enum Operand {
     Register(String),
     Memory(String),
+    IndirectMemory(String),
     Number(String),
     Identifier(String),
     Constant(String),
