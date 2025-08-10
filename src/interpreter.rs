@@ -72,6 +72,7 @@ impl Interpreter {
             if let Err(e) = result {
                 eprintln!("Error occured: {e}");
                 self.running.store(false, Ordering::SeqCst);
+                break;
             }
             let pc = self.pc.load(Ordering::SeqCst);
             if pc < self.statements.len() {

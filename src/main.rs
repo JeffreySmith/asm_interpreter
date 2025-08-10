@@ -10,6 +10,7 @@ fn main() {
     let source = r#"
 DEFINE .name "Jeffrey"
 define .age 33
+
 START:
     SET %0xFF, 10000
     LOAD %0xFF, R1
@@ -20,6 +21,7 @@ START:
     SET %2, 3
     SET %3, 4
     SET %4, 5
+
 MAIN:
     SUB 100, .age
     SET %11, "abc"
@@ -29,15 +31,18 @@ MAIN:
     ;ADD R4, 1
     ;MOV A, R4
     call add_a_r4
+    define .add "constant abc"
+    SET %201, .add
     jmp END r4=5
     jmp MAIN ; also a comment
     not 10
     ;this is a comment to help, maybe?
+
 add_a_r4:
     INC R4
     ADD A, %R4
     ret
-    
+
 END:
     PUSH 100
     PUSH 200
@@ -46,11 +51,10 @@ END:
     POP r7
     push "abcdefg"
     SET r6, "abc"
-    jmp IS_FINE r6="abc"
+    jmp IS_FINE .name="Jeffrey"
     halt
 IS_FINE:
     SET %0xFF, "True"
-
 "#;
     let mut interpreter = Interpreter::new();
     let result = interpreter.parse(source);
