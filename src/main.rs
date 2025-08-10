@@ -8,8 +8,8 @@ mod value;
 
 fn main() {
     let source = r#"
-DEFINE .name "Jeffrey"
-define .age 33
+DEFINE .name "my_name"
+define .age 100 
 
 START:
     SET %0xFF, 10000
@@ -51,10 +51,16 @@ END:
     POP r7
     push "abcdefg"
     SET r6, "abc"
-    jmp IS_FINE .name="Jeffrey"
+    jmp IS_FINE .name="my_name"
     halt
 IS_FINE:
     SET %0xFF, "True"
+    NOT -100
+    STORE A, %15
+    SET %16, "previous should be NOT -100"
+    AND 2,6
+    STORE A, %17
+    AND 2,6
 "#;
     let mut interpreter = Interpreter::new();
     let result = interpreter.parse(source);

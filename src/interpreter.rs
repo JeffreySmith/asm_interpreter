@@ -827,4 +827,46 @@ mod tests {
             .unwrap();
         assert_eq!(get_reg(&interpreter, "a"), Some(Value::Number(-3)));
     }
+    #[test]
+    fn test_and() {
+        let mut interpreter = Interpreter::new();
+        interpreter
+            .execute_and(
+                &ast::Operand::Number("2".to_string()),
+                &ast::Operand::Number("6".to_string()),
+            )
+            .unwrap();
+        assert_eq!(get_reg(&interpreter, "a"), Some(Value::Number(2)));
+
+        let error = interpreter.execute_and(
+            &ast::Operand::Number("-4".to_string()),
+            &ast::Operand::String("Some string value".to_string()),
+        );
+
+        assert!(
+            error.is_err(),
+            "Expected error when using AND on a number and a string"
+        );
+    }
+    #[test]
+    fn test_or() {
+        let mut interpreter = Interpreter::new();
+        interpreter
+            .execute_or(
+                &ast::Operand::Number("2".to_string()),
+                &ast::Operand::Number("8".to_string()),
+            )
+            .unwrap();
+        assert_eq!(get_reg(&interpreter, "a"), Some(Value::Number(10)));
+
+        let error = interpreter.execute_or(
+            &ast::Operand::Number("-4".to_string()),
+            &ast::Operand::String("Some string value".to_string()),
+        );
+
+        assert!(
+            error.is_err(),
+            "Expected error when using OR on a number and a string"
+        );
+    }
 }

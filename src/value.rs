@@ -81,7 +81,10 @@ impl Value {
     }
     pub fn and(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
-            (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a & b)),
+            (Value::Number(a), Value::Number(b)) => {
+                println!("A: {a}, B: {b}");
+                Ok(Value::Number(a & b))
+            }
             _ => Err("Invalid 'and'. Both arguments must be numbers ".to_string()),
         }
     }

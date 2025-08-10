@@ -1,7 +1,7 @@
 program  = _{ SOI ~ LINE* ~ EOI }
 LINE     = _{ ((LABEL | STATEMENT) ~ TRAILING | BLANKLINE | COMMENTLINE) }
 
-STATEMENT = _{ DEFINE | LOAD | STORE | OPPUSH | OPPOP | MOVE | ADD | SUB | MUL | DIV | DEC | INC | OR | NOT | XOR | JUMP | CALL | RET | CLEAR  | HALT | SET | STORE}
+STATEMENT = _{ DEFINE | LOAD | STORE | OPPUSH | OPPOP | MOVE | ADD | SUB | MUL | DIV | DEC | INC | AND | OR | NOT | XOR | JUMP | CALL | RET | CLEAR  | HALT | SET | STORE}
 LOAD      = { ("load" | "LOAD") ~ (MEMORYADDRESS | INDIRECTADDRESS ) ~ "," ~ REGISTER }
 STORE     = { ("store" | "STORE") ~ REGISTER ~ "," ~ (MEMORYADDRESS | INDIRECTADDRESS)}
 OPPUSH    = { ("push" | "PUSH") ~ (MATHOP | STRING | CHARACTER) }
@@ -35,7 +35,7 @@ FLAGS         = { "F" | "f" }
 SP            = { "SP" | "sp"}
 MEMORYADDRESS = @{ "%" ~ NUMBER  }
 INDIRECTADDRESS = @{ "%" ~ REGISTER}
-NUMBER        = @{ (HEX | BINARY | ASCII_DIGIT+) }
+NUMBER        = @{ "-"? ~ (HEX | BINARY | ASCII_DIGIT+) }
 HEX           = @{ "0" ~ ("x" | "X") ~ ASCII_HEX_DIGIT+ }
 BINARY        = @{ "0" ~ ("b" | "B") ~ ASCII_BIN_DIGIT+ }
 
