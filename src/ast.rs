@@ -29,6 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use std::cmp::Ordering;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum Statement {
@@ -121,6 +122,47 @@ pub enum Instruction {
     Halt,
 }
 
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Instruction::Define { name, value } => write!(f, "DEFINE {name} {value}"),
+            Instruction::Set { value, dest } => write!(f, "SET {value}, {dest}"),
+            Instruction::Load { src, dest } => write!(f, "LOAD {src}, {dest}"),
+            Instruction::Store { value, dest } => write!(f, "STORE {value}, {dest}"),
+            Instruction::Clear { target } => write!(f, "CLEAR {target}"),
+            Instruction::Add { left, right } => write!(f, "ADD {left}, {right}"),
+            Instruction::Sub { left, right } => write!(f, "SUB {left}, {right}"),
+            Instruction::Mul { left, right } => write!(f, "MUL {left}, {right}"),
+            Instruction::Div { left, right } => write!(f, "DIV {left}, {right}"),
+            Instruction::Inc { dest } => write!(f, "INC {dest}"),
+            Instruction::Dec { dest } => write!(f, "DEC {dest}"),
+            Instruction::Mov { src, dest } => write!(f, "MOV {src}, {dest}"),
+            Instruction::Push { src } => write!(f, "PUSH {src}"),
+            Instruction::Pop { dest } => {
+                if let Some(op) = dest {
+                    write!(f, "POP {op}")
+                } else {
+                    write!(f, "POP")
+                }
+            }
+            Instruction::Jmp { target, comparison } => {
+                if let Some(comp) = comparison {
+                    write!(f, "JMP {target} {comp}")
+                } else {
+                    write!(f, "JMP {target}")
+                }
+            }
+            Instruction::Call { target } => write!(f, "CALL {target}"),
+            Instruction::And { left, right } => write!(f, "AND {left}, {right}"),
+            Instruction::Or { left, right } => write!(f, "OR {left}, {right}"),
+            Instruction::Xor { left, right } => write!(f, "XOR {left}, {right}"),
+            Instruction::Not { op } => write!(f, "NOT {op}"),
+            Instruction::Ret => write!(f, "RET"),
+            Instruction::Halt => write!(f, "HALT"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Operand {
     Register(String),
@@ -133,12 +175,34 @@ pub enum Operand {
     String(String),
 }
 
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::Register(s)
+            | Operand::Memory(s)
+            | Operand::IndirectMemory(s)
+            | Operand::Number(s)
+            | Operand::Identifier(s)
+            | Operand::Constant(s)
+            | Operand::Character(s)
+            | Operand::String(s) => write!(f, "{s}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Comparison {
     pub left: Operand,
     pub equality: ComparisonOp,
     pub right: Operand,
 }
+
+impl fmt::Display for Comparison {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {} {}", self.left, self.equality, self.right)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
 pub enum ComparisonOp {
     Eq,
@@ -157,6 +221,18 @@ impl ComparisonOp {
             ComparisonOp::Le => ordering != Ordering::Greater,
             ComparisonOp::Gt => ordering == Ordering::Greater,
             ComparisonOp::Ge => ordering != Ordering::Less,
+        }
+    }
+}
+impl fmt::Display for ComparisonOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ComparisonOp::Eq => write!(f, "="),
+            ComparisonOp::Ne => write!(f, "!="),
+            ComparisonOp::Lt => write!(f, "<"),
+            ComparisonOp::Le => write!(f, "<="),
+            ComparisonOp::Gt => write!(f, ">"),
+            ComparisonOp::Ge => write!(f, ">="),
         }
     }
 }

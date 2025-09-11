@@ -133,9 +133,9 @@ impl Interpreter {
             .map_err(|e| format!("Memory lock poisoned: {e}"))
             .unwrap();
         println!("Stack: {stack:#?}");
+        println!("\n\nCall stack: {call_stack:#?}");
         println!("\n\nRegisters: {registers:#?}");
         println!("\n\nMemory: {memory:?}");
-        println!("\n\nCall stack: {call_stack:#?}");
     }
 
     pub fn step(&mut self) -> Result<(), String> {

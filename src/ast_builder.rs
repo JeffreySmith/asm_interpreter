@@ -74,7 +74,7 @@ fn operand_from_pair(pair: Pair<Rule>) -> Result<Operand, String> {
             let inner = pair
                 .into_inner()
                 .next()
-                .ok_or_else(|| "Couldn't find any more operands")?;
+                .ok_or("Couldn't find any more operands")?;
             operand_from_pair(inner)
         }
         Rule::REGISTER => Ok(Operand::Register(pair.as_str().to_string())),
@@ -96,9 +96,9 @@ fn operand_from_pair(pair: Pair<Rule>) -> Result<Operand, String> {
 }
 fn comparison_from_pair(pair: Pair<Rule>) -> Result<Comparison, String> {
     let mut inner = pair.into_inner();
-    let left = operand_from_pair(inner.next().ok_or_else(|| "Expected left for equality")?)?;
+    let left = operand_from_pair(inner.next().ok_or("Expected left for equality")?)?;
 
-    let op_pair = inner.next().ok_or_else(|| "Expected equality")?;
+    let op_pair = inner.next().ok_or("Expected equality")?;
     let equality = match op_pair.as_str() {
         "=" => ComparisonOp::Eq,
         "!=" => ComparisonOp::Ne,
@@ -109,7 +109,7 @@ fn comparison_from_pair(pair: Pair<Rule>) -> Result<Comparison, String> {
         _ => panic!("Unknown comparison"),
     };
 
-    let right = operand_from_pair(inner.next().ok_or_else(|| "Expected right for equality")?)?;
+    let right = operand_from_pair(inner.next().ok_or("Expected right for equality")?)?;
 
     Ok(Comparison {
         left,
@@ -118,6 +118,7 @@ fn comparison_from_pair(pair: Pair<Rule>) -> Result<Comparison, String> {
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
     let mut inner = pair.clone().into_inner();
     match pair.as_rule() {
