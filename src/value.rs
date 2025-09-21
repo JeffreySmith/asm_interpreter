@@ -38,6 +38,10 @@ pub enum Value {
 }
 
 impl Value {
+    /// Compare two `Value`
+    /// # Errors
+    /// This can return an error when the two types of `Value` are not compatible.
+    /// ie a String and a Number
     pub fn compare(&self, other: &Value, op: &ComparisonOp) -> Result<bool, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(op.compare(a.cmp(b))),
@@ -45,6 +49,9 @@ impl Value {
             _ => Err(format!("Invalid comparison between {self:?} and {other:?}")),
         }
     }
+    /// Add two `Value` together
+    /// # Errors
+    /// Can return an error if you try to add a Number and a String
     pub fn add(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
@@ -54,6 +61,9 @@ impl Value {
     }
     /// For strings, when we subtract a positive number, it removes characters from the front.
     /// Negative numbers remove them from the end. This "kind of" works like Python's list indexing
+    /// # Errors
+    /// Can return an error when subtracting a number from a string, if the Number cannot be
+    /// converted
     pub fn sub(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
@@ -83,21 +93,27 @@ impl Value {
     /// Multiplying a string and a number returns a string concatenated with itself
     /// the number of times it's being multiplied by.
     /// If you multiply it by number less than or equal to zero, you will get an empty string
+    /// # Errors
+    /// Returns an error if you try to multiply two strings together
     pub fn mul(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
-            (Value::String(a), Value::Number(b)) => {
+            (Value::String(a), Value::Number(b)) | (Value::Number(b), Value::String(a)) => {
                 let mut new_string = String::new();
                 for _ in 0..*b {
                     new_string += a;
                 }
                 Ok(Value::String(new_string))
             }
-            _ => Err("Invalid multiplication between number and string".to_string()),
+            _ => Err("Invalid multiplication between two strings".to_string()),
         }
     }
     /// Dividing two strings gives us the size difference between the two strings. Division between
     /// two numbers is always truncated since it will always be integer division
+    /// # Errors
+    /// Returns an error if you try to divide by zero, or if you try to divide a String by a
+    /// number. Can also return an error if trying to get the length of either String in a
+    /// String/String div fails
     pub fn div(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => {
@@ -121,6 +137,8 @@ impl Value {
         }
     }
     /// Logical AND on two numbers.
+    /// # Errors
+    /// Returns an error when String Values are supplied
     pub fn and(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => {
@@ -131,6 +149,8 @@ impl Value {
         }
     }
     /// Logical OR on two numbers
+    /// # Errors
+    /// Returns an error when String Values are supplied
     pub fn or(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a | b)),
@@ -138,12 +158,17 @@ impl Value {
         }
     }
     /// Logical XOR on two numbers
+    /// # Errors
+    /// Returns an error when String Values are supplied
     pub fn xor(&self, other: &Value) -> Result<Value, String> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a ^ b)),
             _ => Err("Invalid 'xor'. Both arguments must be numbers.".to_string()),
         }
     }
+    /// Logical NOT on two Numbers
+    /// # Errors
+    /// Returns an error when a String is supplied
     pub fn not(&self) -> Result<Value, String> {
         match self {
             Value::Number(a) => Ok(Value::Number(!a)),

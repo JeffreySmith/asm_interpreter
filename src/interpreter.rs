@@ -54,7 +54,14 @@ pub struct Interpreter {
     pub running: AtomicBool,
 }
 
+impl Default for Interpreter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Interpreter {
+    #[must_use]
     pub fn new() -> Interpreter {
         let mut registers: HashMap<String, Value> = HashMap::new();
         for reg in REGISTERS {
@@ -74,6 +81,9 @@ impl Interpreter {
             running: AtomicBool::new(true),
         }
     }
+    /// Parse some input text into a ast
+    /// # Errors
+    /// This can return an Error if the text introduced here can't be parsed correctly
     pub fn parse<T: AsRef<str>>(&mut self, contents: T) -> Result<(), ast_builder::ParseError> {
         self.statements = ast_builder::parse_program(contents)?;
         self.compile();
@@ -96,7 +106,9 @@ impl Interpreter {
             }
         }
     }
-
+    /// Run the actual program that's been parsed
+    /// # Panics
+    /// If any lock is poisoned, the code can panic. This is **probably** okay most of the time
     pub fn run(&mut self) {
         while self.running.load(Ordering::SeqCst) {
             let result = self.step();
@@ -139,6 +151,10 @@ impl Interpreter {
         println!("\n\nMemory: {memory:?}");
     }
 
+    /// Step through a program, one instruction at a time
+    /// # Errors
+    /// This can return an error if some operand is not possible to run. This could be things like
+    /// setting a non-existant memory address, or a division by zero
     pub fn step(&mut self) -> Result<(), String> {
         let pc = self.pc.load(Ordering::SeqCst);
         if pc >= self.statements.len() {
@@ -632,14 +648,6 @@ mod tests {
             )
             .unwrap();
     }
-    fn move_reg_to_mem(interpreter: &mut Interpreter, left: &str, right: &str) {
-        interpreter
-            .execute_move(
-                &ast::Operand::Register(left.to_string()),
-                &ast::Operand::Memory(right.to_string()),
-            )
-            .unwrap();
-    }
 
     fn clear_reg(interpreter: &mut Interpreter, reg: &str) {
         interpreter
@@ -701,7 +709,6 @@ mod tests {
         clear_mem(&mut interpreter, "%100");
         assert_eq!(get_mem(&interpreter, 100).unwrap(), Value::default());
     }
-
     #[test]
     fn test_execute_move_registers() {
         let mut interpreter = Interpreter::new();
