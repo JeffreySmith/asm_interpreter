@@ -38,7 +38,7 @@ pub enum Statement {
     Instruction(Instruction),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Instruction {
     Define {
         name: String,
@@ -122,6 +122,12 @@ pub enum Instruction {
     Halt,
 }
 
+impl AsRef<Instruction> for Instruction {
+    fn as_ref(&self) -> &Instruction {
+        self
+    }
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -163,10 +169,11 @@ impl fmt::Display for Instruction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Operand {
     Register(String),
     Memory(String),
+    #[allow(dead_code)]
     IndirectMemory(String),
     Number(String),
     Identifier(String),
@@ -190,7 +197,13 @@ impl fmt::Display for Operand {
     }
 }
 
-#[derive(Debug, Clone)]
+impl AsRef<Operand> for Operand {
+    fn as_ref(&self) -> &Operand {
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Comparison {
     pub left: Operand,
     pub equality: ComparisonOp,
@@ -203,7 +216,7 @@ impl fmt::Display for Comparison {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum ComparisonOp {
     Eq,
     Ne,

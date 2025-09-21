@@ -29,12 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 #![deny(clippy::pedantic)]
-use crate::value::Value;
-use interpreter::Interpreter;
-mod ast;
-mod ast_builder;
-mod interpreter;
-mod value;
+use asm_interpreter::Interpreter;
 
 fn main() {
     let source = r#"

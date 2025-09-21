@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 use crate::ast::{Comparison, Instruction, Operand, Statement};
 use crate::{Value, ast_builder};
 use std::convert::TryInto;
+use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{collections::HashMap, num::ParseIntError, sync::Arc, sync::RwLock};
 
@@ -73,7 +74,7 @@ impl Interpreter {
             running: AtomicBool::new(true),
         }
     }
-    pub fn parse(&mut self, contents: &str) -> Result<(), ast_builder::ParseError> {
+    pub fn parse<T: AsRef<str>>(&mut self, contents: T) -> Result<(), ast_builder::ParseError> {
         self.statements = ast_builder::parse_program(contents)?;
         self.compile();
         Ok(())
@@ -369,10 +370,10 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_call(&mut self, label: &String) -> Result<(), String> {
+    fn execute_call<T: AsRef<str> + std::fmt::Display>(&mut self, label: T) -> Result<(), String> {
         let idx = self
             .labels
-            .get(label)
+            .get(label.as_ref())
             .ok_or_else(|| format!("Label '{label}' does not exist"))?;
         let mut call_stack = self
             .call_stack
@@ -476,8 +477,9 @@ impl Interpreter {
         }
     }
 
-    fn get_address(&self, addr: &str) -> Result<Value, String> {
+    fn get_address<T: AsRef<str> + Display>(&self, addr: T) -> Result<Value, String> {
         let address = addr
+            .as_ref()
             .strip_prefix('%')
             .ok_or_else(|| format!("Invalid address '{addr}'"))?;
         match convert_string_to_num(address) {
@@ -499,8 +501,16 @@ impl Interpreter {
         }
     }
 
-    fn set_address(&self, address: &str, value: Value) -> Result<(), String> {
-        let mut address = address.strip_prefix('%').unwrap_or(address).to_string();
+    fn set_address<T: AsRef<str> + Display + ToString>(
+        &self,
+        address: T,
+        value: Value,
+    ) -> Result<(), String> {
+        let mut address = address
+            .as_ref()
+            .strip_prefix('%')
+            .unwrap_or(address.as_ref())
+            .to_string();
         let reg_address = match self.get_register(&address) {
             Ok(Value::Number(_)) => Some(self.get_register(&address)?),
             _ => None,
@@ -528,15 +538,15 @@ impl Interpreter {
             Err(e) => Err(format!("Invalid address: {address:?} - {e}")),
         }
     }
-    fn get_register(&self, register: &str) -> Result<Value, String> {
+    fn get_register<T: AsRef<str> + Display>(&self, register: T) -> Result<Value, String> {
         let registers = self
             .registers
             .read()
             .map_err(|e| format!("Memory lock Poisoned: {e}"))?;
-        let reg = register.to_lowercase();
+        let reg = register.as_ref().to_lowercase();
         if let Some(r) = reg.strip_prefix("%") {
             match registers.get(r) {
-                Some(Value::Number(addr)) => self.get_address(&addr.to_string()),
+                Some(Value::Number(addr)) => self.get_address(addr.to_string()),
                 Some(_) => Err(format!(
                     "Register '{r}' does not hold a numeric value for indirect access",
                 )),
@@ -549,12 +559,12 @@ impl Interpreter {
             }
         }
     }
-    fn set_register(&self, register: &str, value: Value) -> Result<(), String> {
+    fn set_register<T: AsRef<str>>(&self, register: T, value: Value) -> Result<(), String> {
         let mut registers = self
             .registers
             .write()
             .map_err(|e| format!("Memory lock Poisoned: {e}"))?;
-        let reg = register.to_lowercase();
+        let reg = register.as_ref().to_lowercase();
         let exists = registers.get(&reg);
         if exists.is_some() {
             registers.insert(reg, value);
@@ -578,8 +588,8 @@ fn resolve_operand_compile(operand: &Operand, constants: &HashMap<String, Value>
     }
 }
 
-fn convert_string_to_num(input: &str) -> Result<i64, ParseIntError> {
-    let input = input.to_lowercase().trim().to_string();
+fn convert_string_to_num<T: AsRef<str>>(input: T) -> Result<i64, ParseIntError> {
+    let input = input.as_ref().to_lowercase().trim().to_string();
     if let Some(hex) = input.strip_prefix("0x") {
         i64::from_str_radix(hex, 16)
     } else if let Some(binary) = input.strip_prefix("0b") {

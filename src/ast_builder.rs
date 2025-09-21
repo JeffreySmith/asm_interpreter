@@ -43,19 +43,11 @@ pub struct ASMParser;
 #[derive(Debug)]
 pub enum ParseError {
     Pest(String),
-    UnexpectedToken { token: String, position: usize },
-    Invalid { message: String, position: usize },
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseError::UnexpectedToken { token, position } => {
-                write!(f, "Unexpected token '{token}' at position {position}")
-            }
-            ParseError::Invalid { message, position } => {
-                write!(f, "Invalid: {message} at position {position}")
-            }
             ParseError::Pest(s) => write!(f, "{s}"),
         }
     }
@@ -242,9 +234,9 @@ pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
     }
 }
 
-pub fn parse_program(contents: &str) -> Result<Vec<Statement>, ParseError> {
+pub fn parse_program<T: AsRef<str>>(contents: T) -> Result<Vec<Statement>, ParseError> {
     let mut statements: Vec<Statement> = Vec::new();
-    let parse_results = ASMParser::parse(Rule::program, contents);
+    let parse_results = ASMParser::parse(Rule::program, contents.as_ref());
     match parse_results {
         Ok(pairs) => {
             for pair in pairs {
@@ -254,7 +246,6 @@ pub fn parse_program(contents: &str) -> Result<Vec<Statement>, ParseError> {
                 let statement = statement_from_pair(&pair);
                 statements.push(statement);
             }
-            //Ok(statements)
         }
         Err(e) => {
             return Err(ParseError::Pest(format!("{e:?}")));
