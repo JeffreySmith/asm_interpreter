@@ -28,15 +28,61 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#![deny(clippy::pedantic)]
-#![deny(clippy::all)]
-pub use crate::value::Value;
-pub use interpreter::Interpreter;
+use thiserror::Error;
 
-pub mod error;
-pub mod interpreter;
-pub mod value;
-pub use error::InterpreterError;
-pub use error::ValueError;
-mod ast;
-mod ast_builder;
+use crate::ast_builder;
+use crate::value::Value;
+
+#[derive(Debug, Error)]
+pub enum InterpreterError {
+    #[error("Failed to parse program: {0}")]
+    ParseError(#[from] Box<pest::error::Error<ast_builder::Rule>>),
+
+    #[error("Invalid operand: {0}")]
+    InvalidOperand(String),
+
+    #[error("Invalid register: {0}")]
+    InvalidRegister(String),
+
+    #[error("Invalid memory address: {0}")]
+    InvalidMemoryAddress(String),
+
+    #[error("Division by zero in {0}/{1}")]
+    DivisionByZero(i64, i64),
+
+    #[error("Operation not supported on these types: {0:?}")]
+    TypeMismatch(Box<(Value, Value)>),
+
+    #[error("Label not found: {0}")]
+    LabelNotFound(String),
+
+    #[error("Stack underflow")]
+    StackUnderflow,
+
+    #[error("Cannot set a constant: {0}")]
+    CannotSetConstant(String),
+
+    #[error("Cannot set an identifier: {0}")]
+    CannotSetIdentifier(String),
+
+    #[error("Memory lock poisoned: {0}")]
+    LockPoisoned(String),
+
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+#[derive(Debug, Error)]
+pub enum ValueError {
+    #[error("Type mismatch: {0:?} and {1:?}")]
+    TypeMismatch(Value, Value),
+
+    #[error("Division by zero: {0}/{1}")]
+    DivisionByZero(i64, i64),
+
+    #[error("Conversion error: {0}")]
+    ConversionError(String),
+
+    #[error("Invalid operation: {0}")]
+    InvalidOperation(String),
+}

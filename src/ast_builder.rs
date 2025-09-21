@@ -31,27 +31,14 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #![deny(clippy::pedantic)]
 
 use crate::ast::{Comparison, ComparisonOp, Instruction, Operand, Statement};
+use crate::ast_builder;
 use pest::Parser;
 use pest::iterators::Pair;
 use pest_derive::Parser;
-use std::fmt;
 
 #[derive(Parser)]
 #[grammar = "asm.pest"]
 pub struct ASMParser;
-
-#[derive(Debug)]
-pub enum ParseError {
-    Pest(String),
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ParseError::Pest(s) => write!(f, "{s}"),
-        }
-    }
-}
 
 fn next_operand<'a, I>(inner: &mut I) -> Operand
 where
@@ -234,7 +221,9 @@ pub fn statement_from_pair(pair: &Pair<Rule>) -> Statement {
     }
 }
 
-pub fn parse_program<T: AsRef<str>>(contents: T) -> Result<Vec<Statement>, ParseError> {
+pub fn parse_program<T: AsRef<str>>(
+    contents: T,
+) -> Result<Vec<Statement>, Box<pest::error::Error<ast_builder::Rule>>> {
     let mut statements: Vec<Statement> = Vec::new();
     let parse_results = ASMParser::parse(Rule::program, contents.as_ref());
     match parse_results {
@@ -247,9 +236,7 @@ pub fn parse_program<T: AsRef<str>>(contents: T) -> Result<Vec<Statement>, Parse
                 statements.push(statement);
             }
         }
-        Err(e) => {
-            return Err(ParseError::Pest(format!("{e:?}")));
-        }
+        Err(e) => return Err(Box::new(e)),
     }
     Ok(statements)
 }

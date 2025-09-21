@@ -29,6 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use crate::ast::{Comparison, Instruction, Operand, Statement};
+use crate::error::{InterpreterError, ValueError};
 use crate::{Value, ast_builder};
 use std::convert::TryInto;
 use std::fmt::Display;
@@ -42,15 +43,25 @@ const ACC: &str = "a";
 const REGISTERS: [&str; 10] = ["a", "f", "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"];
 
 pub struct Interpreter {
+    /// This is a display for RGB colours that might get used in a puzzle.
     pub display: Arc<RwLock<Vec<(i32, i32, i32)>>>,
+    /// A `HashMap` of registers. Do not insert additional registers into this.
     pub registers: Arc<RwLock<HashMap<String, Value>>>,
+    /// A `Vec` that contains all the potential memory addresses accessible for the vm. Do not push
+    /// new values into this
     pub memory: Arc<RwLock<Vec<Value>>>,
+    /// The stack accessible to the vm. This can have as many values as requested pushed to it
     pub stack: Arc<RwLock<Vec<Value>>>,
+    /// A list of labels used for `Call` and `Jmp`
     labels: HashMap<String, usize>,
+    /// A list of constants to pull from
     constants: HashMap<String, Value>,
     statements: Vec<Statement>,
+    /// The program counter
     pub pc: AtomicUsize,
+    /// The full call stack. Needs to be accessible sot that debugging is possible
     pub call_stack: Arc<RwLock<Vec<usize>>>,
+    /// A way to check if the machine is running
     pub running: AtomicBool,
 }
 
@@ -59,9 +70,9 @@ impl Default for Interpreter {
         Self::new()
     }
 }
-
 impl Interpreter {
     #[must_use]
+    /// Initialize a new interpreter
     pub fn new() -> Interpreter {
         let mut registers: HashMap<String, Value> = HashMap::new();
         for reg in REGISTERS {
@@ -84,11 +95,12 @@ impl Interpreter {
     /// Parse some input text into a ast
     /// # Errors
     /// This can return an Error if the text introduced here can't be parsed correctly
-    pub fn parse<T: AsRef<str>>(&mut self, contents: T) -> Result<(), ast_builder::ParseError> {
+    pub fn parse<T: AsRef<str>>(&mut self, contents: T) -> Result<(), InterpreterError> {
         self.statements = ast_builder::parse_program(contents)?;
         self.compile();
         Ok(())
     }
+    /// Compile the parsed ast
     fn compile(&mut self) {
         for (i, statement) in self.statements.iter().enumerate() {
             match statement {
@@ -128,22 +140,22 @@ impl Interpreter {
         let stack = self
             .stack
             .read()
-            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))
             .unwrap();
         let registers = self
             .registers
             .read()
-            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))
             .unwrap();
         let memory = self
             .memory
             .read()
-            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))
             .unwrap();
         let call_stack = self
             .call_stack
             .read()
-            .map_err(|e| format!("Memory lock poisoned: {e}"))
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))
             .unwrap();
         println!("Stack: {stack:#?}");
         println!("\n\nCall stack: {call_stack:#?}");
@@ -155,7 +167,7 @@ impl Interpreter {
     /// # Errors
     /// This can return an error if some operand is not possible to run. This could be things like
     /// setting a non-existant memory address, or a division by zero
-    pub fn step(&mut self) -> Result<(), String> {
+    pub fn step(&mut self) -> Result<(), InterpreterError> {
         let pc = self.pc.load(Ordering::SeqCst);
         if pc >= self.statements.len() {
             self.execute_halt();
@@ -169,7 +181,7 @@ impl Interpreter {
                 Instruction::Set { value, dest } => {
                     let val = self
                         .get_operand_value(value)
-                        .ok_or_else(|| "No value found".to_string())?;
+                        .ok_or(InterpreterError::InvalidOperand(format!("{value:?}")))?;
                     self.execute_set(val, dest)?;
                 }
                 Instruction::Load { src, dest } => self.execute_load(src, dest)?,
@@ -190,7 +202,9 @@ impl Interpreter {
                         self.execute_jump(label, comparison.as_ref())?;
                         increment_pc = false;
                     } else {
-                        return Err(format!("Invalid target '{target:?}'"));
+                        return Err(InterpreterError::InvalidOperand(format!(
+                            "Invalid target '{target:?}'"
+                        )));
                     }
                 }
                 Instruction::Call { target } => {
@@ -198,7 +212,9 @@ impl Interpreter {
                         self.execute_call(label)?;
                         increment_pc = false;
                     } else {
-                        return Err(format!("Invalid target '{target:?}"));
+                        return Err(InterpreterError::InvalidOperand(format!(
+                            "Invalid target '{target:?}'"
+                        )));
                     }
                 }
                 Instruction::Ret => {
@@ -220,162 +236,245 @@ impl Interpreter {
         }
         Ok(())
     }
-
-    fn execute_set(&mut self, value: Value, dest: &Operand) -> Result<(), String> {
+    /// Set an Operand to the passed `Value`
+    /// # Errors
+    /// This can error when some operand cannot be set this way. This shouldn't happen since the
+    /// parsing should catch it first
+    fn execute_set(&mut self, value: Value, dest: &Operand) -> Result<(), InterpreterError> {
         match dest {
             Operand::Register(name) => self.set_register(name, value),
             Operand::Memory(address) => self.set_address(address, value),
-            _ => Err(format!("Invalid operand for set: {dest:?}")),
+            _ => Err(InterpreterError::InvalidOperand(format!(
+                "Invalid operand for set: {dest:?}"
+            ))),
         }
     }
-
-    fn execute_load(&mut self, src: &Operand, register: &Operand) -> Result<(), String> {
+    /// Load from some operand.
+    /// # Errors
+    /// This can error if a particular `Operand` does not support loading into
+    fn execute_load(&mut self, src: &Operand, register: &Operand) -> Result<(), InterpreterError> {
         let value = match src {
             Operand::Memory(address) | Operand::Number(address) => self.get_address(address),
             Operand::Register(reg) => self.get_register(reg),
-            _ => Err(format!("Invalid src for LOAD '{src:#?}'")),
+            _ => Err(InterpreterError::InvalidOperand(format!(
+                "Invalid src for LOAD '{src:#?}'"
+            ))),
         }?;
         if let Operand::Register(name) = register {
             self.set_register(name, value)
         } else {
-            Err("Invalid operands used in LOAD".to_string())
+            Err(InterpreterError::InvalidOperand(
+                "Invalid operands used in LOAD".to_string(),
+            ))
         }
     }
-
-    fn execute_clear(&mut self, dest: &Operand) -> Result<(), String> {
+    /// Clear an operand
+    fn execute_clear(&mut self, dest: &Operand) -> Result<(), InterpreterError> {
         self.set_operand_value(dest, &Value::default())
     }
-
-    fn execute_move(&mut self, src: &Operand, dest: &Operand) -> Result<(), String> {
+    /// Move from one `Operand` to another
+    /// # Errors
+    /// Returns an error when we can't get the value for the first operand. Shouldn't ever occur
+    fn execute_move(&mut self, src: &Operand, dest: &Operand) -> Result<(), InterpreterError> {
         let value = self
             .get_operand_value(src)
-            .ok_or_else(|| format!("Could not resolve value of operand '{src:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{src:?}'"
+            )))?;
 
         self.set_operand_value(dest, &value)?;
         Ok(())
     }
-
-    fn execute_add(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    /// Add two `Operand` together
+    /// # Errors
+    /// Can error when either `Operand` cannot be loaded, or if `Value::add` fails
+    fn execute_add(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::add(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::add(&left_val, &right_val).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone())))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
-    fn execute_sub(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    /// Subtract two `Operand`
+    /// # Errors
+    /// Can fail if we can't get the value of either `Operand`, or if subtracting fails
+    fn execute_sub(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::sub(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::sub(&left_val, &right_val).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone())))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
-    fn execute_mul(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    fn execute_mul(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::mul(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::mul(&left_val, &right_val).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone())))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
-    fn execute_div(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    fn execute_div(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::div(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::div(&left_val, &right_val).map_err(|e| match e {
+            ValueError::DivisionByZero(a, b) => InterpreterError::DivisionByZero(a, b),
+            _ => InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone()))),
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
-    fn execute_inc(&mut self, dest: &Operand) -> Result<(), String> {
+    fn execute_inc(&mut self, dest: &Operand) -> Result<(), InterpreterError> {
         let value = self
             .get_operand_value(dest)
-            .ok_or_else(|| format!("Could not resolve value of operand '{dest:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{dest:?}'"
+            )))?;
 
-        let result = Value::add(&value, &Value::Number(1))?;
+        let result = Value::add(&value, &Value::Number(1)).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((value.clone(), Value::Number(1))))
+        })?;
         self.set_operand_value(dest, &result)
     }
-    fn execute_dec(&mut self, dest: &Operand) -> Result<(), String> {
+    fn execute_dec(&mut self, dest: &Operand) -> Result<(), InterpreterError> {
         let value = self
             .get_operand_value(dest)
-            .ok_or_else(|| format!("Could not resolve value of operand '{dest:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{dest:?}'"
+            )))?;
 
-        let result = Value::sub(&value, &Value::Number(1))?;
+        let result = Value::sub(&value, &Value::Number(1)).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((value.clone(), Value::Number(1))))
+        })?;
         self.set_operand_value(dest, &result)
     }
 
-    fn execute_and(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    fn execute_and(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::and(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::and(&left_val, &right_val).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone())))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
 
-    fn execute_or(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    fn execute_or(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::or(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::or(&left_val, &right_val).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone())))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
-    fn execute_xor(&mut self, left: &Operand, right: &Operand) -> Result<(), String> {
+    fn execute_xor(&mut self, left: &Operand, right: &Operand) -> Result<(), InterpreterError> {
         let left_val = self
             .get_operand_value(left)
-            .ok_or_else(|| format!("Could not resolve value of operand '{left:?}'"))?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{left:?}'"
+            )))?;
 
         let right_val = self
             .get_operand_value(right)
-            .ok_or_else(|| format!("Could not resolve value of operand '{right:?}'"))?;
-        let value = Value::xor(&left_val, &right_val)?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{right:?}'"
+            )))?;
+        let value = Value::xor(&left_val, &right_val).map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((left_val.clone(), right_val.clone())))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
-    fn execute_not(&mut self, src: &Operand) -> Result<(), String> {
+    fn execute_not(&mut self, src: &Operand) -> Result<(), InterpreterError> {
         let val = self
             .get_operand_value(src)
-            .ok_or_else(|| format!("Could not resolve value of operand '{src:?}'"))?;
-        let value = val.not()?;
+            .ok_or(InterpreterError::InvalidOperand(format!(
+                "Could not resolve value of operand '{src:?}'"
+            )))?;
+        let value = val.not().map_err(|_| {
+            InterpreterError::TypeMismatch(Box::new((val.clone(), Value::Number(0))))
+        })?;
         self.set_operand_value(&Operand::Register(ACC.to_string()), &value)
     }
     fn execute_jump(
         &mut self,
         label: &String,
         comparison: Option<&Comparison>,
-    ) -> Result<(), String> {
+    ) -> Result<(), InterpreterError> {
         let idx = self
             .labels
             .get(label)
-            .ok_or_else(|| format!("Label '{label}' does not exist"))?;
+            .ok_or(InterpreterError::LabelNotFound(label.clone()))?;
 
         if let Some(comparison) = comparison {
-            let left = self
-                .get_operand_value(&comparison.left)
-                .ok_or_else(|| format!("Operand {:?} not found", comparison.left))?;
-            let right = self
-                .get_operand_value(&comparison.right)
-                .ok_or_else(|| format!("Operand {:?} not found", comparison.right))?;
+            let left = self.get_operand_value(&comparison.left).ok_or(
+                InterpreterError::InvalidOperand(format!(
+                    "Operand {:?} not found",
+                    comparison.left
+                )),
+            )?;
+            let right = self.get_operand_value(&comparison.right).ok_or(
+                InterpreterError::InvalidOperand(format!(
+                    "Operand {:?} not found",
+                    comparison.right
+                )),
+            )?;
             println!("{left:?} = {right:?} ?");
-            let result = Value::compare(&left, &right, &comparison.equality)?;
+            let result = Value::compare(&left, &right, &comparison.equality).map_err(|_| {
+                InterpreterError::TypeMismatch(Box::new((left.clone(), right.clone())))
+            })?;
             if !result {
                 let idx = self.pc.load(Ordering::SeqCst);
                 self.pc.store(idx + 1, Ordering::SeqCst);
@@ -386,34 +485,35 @@ impl Interpreter {
         Ok(())
     }
 
-    fn execute_call<T: AsRef<str> + std::fmt::Display>(&mut self, label: T) -> Result<(), String> {
+    fn execute_call<T: AsRef<str> + std::fmt::Display>(
+        &mut self,
+        label: T,
+    ) -> Result<(), InterpreterError> {
         let idx = self
             .labels
             .get(label.as_ref())
-            .ok_or_else(|| format!("Label '{label}' does not exist"))?;
+            .ok_or(InterpreterError::LabelNotFound(label.as_ref().to_string()))?;
         let mut call_stack = self
             .call_stack
             .write()
-            .map_err(|e| format!("Memory lock poisoned: {e}"))?;
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
         call_stack.push(self.pc.load(Ordering::SeqCst));
         self.pc.store(*idx, Ordering::SeqCst);
         Ok(())
     }
 
-    fn execute_ret(&mut self) -> Result<(), String> {
+    fn execute_ret(&mut self) -> Result<(), InterpreterError> {
         let mut call_stack = self
             .call_stack
             .write()
-            .map_err(|e| format!("Memory lock poisoned: {e}"))?;
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
 
         println!("Call stack: {call_stack:?}");
         if let Some(addr) = call_stack.pop() {
-            // return one more than where we started so we don't just call the "function"
-            // infinitely
             self.pc.store(addr + 1, Ordering::SeqCst);
             Ok(())
         } else {
-            Err("Cannot return from a function since the call stack is empty".to_string())
+            Err(InterpreterError::StackUnderflow)
         }
     }
 
@@ -423,27 +523,27 @@ impl Interpreter {
         }
     }
 
-    fn execute_push(&mut self, src: &Operand) -> Result<(), String> {
+    fn execute_push(&mut self, src: &Operand) -> Result<(), InterpreterError> {
         let val = self.get_operand_value(src).unwrap_or_default();
 
         self.stack
             .write()
-            .map_err(|e| format!("Memory lock Poisoned: {e}"))?
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?
             .push(val);
 
         Ok(())
     }
 
-    fn execute_pop(&mut self, dest: Option<&Operand>) -> Result<(), String> {
+    fn execute_pop(&mut self, dest: Option<&Operand>) -> Result<(), InterpreterError> {
         let val = {
             let mut stack = self
                 .stack
                 .write()
-                .map_err(|e| format!("Memory lock poisoned: {e}"))?;
+                .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
 
             stack.pop()
         }
-        .ok_or_else(|| "Stack is empty, cannot pop".to_string())?;
+        .ok_or(InterpreterError::StackUnderflow)?;
 
         if let Some(dest) = dest {
             self.set_operand_value(dest, &val)?;
@@ -455,12 +555,16 @@ impl Interpreter {
         &mut self,
         register: &Operand,
         memory_address: &Operand,
-    ) -> Result<(), String> {
+    ) -> Result<(), InterpreterError> {
         let val = match register {
             Operand::Register(name) => self
                 .get_operand_value(register)
-                .ok_or_else(|| format!("Invalid register '{name}'"))?,
-            _ => return Err("Store must be 'STORE register, memory address'".to_string()),
+                .ok_or(InterpreterError::InvalidRegister(name.clone()))?,
+            _ => {
+                return Err(InterpreterError::InvalidOperand(
+                    "Store must be 'STORE register, memory address'".to_string(),
+                ));
+            }
         };
         self.set_operand_value(memory_address, &val)?;
         Ok(())
@@ -478,42 +582,53 @@ impl Interpreter {
         }
     }
 
-    fn set_operand_value(&mut self, operand: &Operand, value: &Value) -> Result<(), String> {
+    fn set_operand_value(
+        &mut self,
+        operand: &Operand,
+        value: &Value,
+    ) -> Result<(), InterpreterError> {
         match operand {
             Operand::Memory(address) => self.set_address(address, value.clone()),
             Operand::Register(register) | Operand::IndirectMemory(register) => {
                 self.set_register(register, value.clone())
             }
-            Operand::Constant(s) => Err(format!("Cannot change constant {s}")),
-            Operand::Identifier(i) => Err(format!("Cannot set identifier {i}")),
-
-            Operand::Number(_) | Operand::Character(_) | Operand::String(_) => {
-                Err("Cannot set operand, invalid type".to_string())
-            }
+            Operand::Constant(s) => Err(InterpreterError::CannotSetConstant(s.clone())),
+            Operand::Identifier(i) => Err(InterpreterError::CannotSetIdentifier(i.clone())),
+            Operand::Number(_) | Operand::Character(_) | Operand::String(_) => Err(
+                InterpreterError::InvalidOperand("Cannot set operand, invalid type".to_string()),
+            ),
         }
     }
 
-    fn get_address<T: AsRef<str> + Display>(&self, addr: T) -> Result<Value, String> {
-        let address = addr
-            .as_ref()
-            .strip_prefix('%')
-            .ok_or_else(|| format!("Invalid address '{addr}'"))?;
+    fn get_address<T: AsRef<str> + Display>(&self, addr: T) -> Result<Value, InterpreterError> {
+        let address =
+            addr.as_ref()
+                .strip_prefix('%')
+                .ok_or(InterpreterError::InvalidMemoryAddress(
+                    addr.as_ref().to_string(),
+                ))?;
         match convert_string_to_num(address) {
             Ok(address) => {
-                let index: usize = address
-                    .try_into()
-                    .map_err(|_| format!("Negative memory address {address}"))?;
+                let index: usize = address.try_into().map_err(|_| {
+                    InterpreterError::InvalidMemoryAddress(format!(
+                        "Negative memory address {address}"
+                    ))
+                })?;
                 if index >= RAM_SLOTS {
-                    return Err(format!("Address '{index}' out of range"));
+                    return Err(InterpreterError::InvalidMemoryAddress(format!(
+                        "Address '{index}' out of range"
+                    )));
                 }
                 let memory = self
                     .memory
                     .read()
-                    .map_err(|e| format!("Memory lock poisoned: {e}"))?;
+                    .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
                 let value = memory[index].clone();
                 Ok(value)
             }
-            Err(e) => Err(format!("Invalid address: {address:?} - {e}")),
+            Err(e) => Err(InterpreterError::InvalidMemoryAddress(format!(
+                "Invalid address: {address:?} - {e}"
+            ))),
         }
     }
 
@@ -521,7 +636,7 @@ impl Interpreter {
         &self,
         address: T,
         value: Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), InterpreterError> {
         let mut address = address
             .as_ref()
             .strip_prefix('%')
@@ -537,56 +652,71 @@ impl Interpreter {
 
         match convert_string_to_num(&address) {
             Ok(address) => {
-                let index: usize = address
-                    .try_into()
-                    .map_err(|_| format!("Negative memory address {address}"))?;
+                let index: usize = address.try_into().map_err(|_| {
+                    InterpreterError::InvalidMemoryAddress(format!(
+                        "Negative memory address {address}"
+                    ))
+                })?;
                 if index >= RAM_SLOTS {
-                    return Err(format!("Address '{index}' out of range"));
+                    return Err(InterpreterError::InvalidMemoryAddress(format!(
+                        "Address '{index}' out of range"
+                    )));
                 }
                 let mut memory = self
                     .memory
                     .write()
-                    .map_err(|e| format!("Memory lock poisoned: {e}"))?;
+                    .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
 
                 memory[index] = value;
                 Ok(())
             }
-            Err(e) => Err(format!("Invalid address: {address:?} - {e}")),
+            Err(e) => Err(InterpreterError::InvalidMemoryAddress(format!(
+                "Invalid address: {address:?} - {e}"
+            ))),
         }
     }
-    fn get_register<T: AsRef<str> + Display>(&self, register: T) -> Result<Value, String> {
+    fn get_register<T: AsRef<str> + Display>(
+        &self,
+        register: T,
+    ) -> Result<Value, InterpreterError> {
         let registers = self
             .registers
             .read()
-            .map_err(|e| format!("Memory lock Poisoned: {e}"))?;
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
         let reg = register.as_ref().to_lowercase();
         if let Some(r) = reg.strip_prefix("%") {
             match registers.get(r) {
                 Some(Value::Number(addr)) => self.get_address(addr.to_string()),
-                Some(_) => Err(format!(
+                Some(_) => Err(InterpreterError::InvalidRegister(format!(
                     "Register '{r}' does not hold a numeric value for indirect access",
-                )),
-                _ => Err(format!("'{r}' invalid")),
+                ))),
+                _ => Err(InterpreterError::InvalidRegister(format!("'{r}' invalid"))),
             }
         } else {
             match registers.get(&reg) {
                 Some(r) => Ok(r.clone()),
-                None => Err(format!("Register '{register}' does not exist")),
+                None => Err(InterpreterError::InvalidRegister(
+                    register.as_ref().to_string(),
+                )),
             }
         }
     }
-    fn set_register<T: AsRef<str>>(&self, register: T, value: Value) -> Result<(), String> {
+    fn set_register<T: AsRef<str>>(
+        &self,
+        register: T,
+        value: Value,
+    ) -> Result<(), InterpreterError> {
         let mut registers = self
             .registers
             .write()
-            .map_err(|e| format!("Memory lock Poisoned: {e}"))?;
+            .map_err(|e| InterpreterError::LockPoisoned(format!("{e}")))?;
         let reg = register.as_ref().to_lowercase();
         let exists = registers.get(&reg);
         if exists.is_some() {
             registers.insert(reg, value);
             Ok(())
         } else {
-            Err(format!("Register '{reg}' does not exist"))
+            Err(InterpreterError::InvalidRegister(reg))
         }
     }
 }

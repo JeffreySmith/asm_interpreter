@@ -29,6 +29,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 use crate::ast::ComparisonOp;
+use crate::error::ValueError;
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,27 +37,26 @@ pub enum Value {
     Number(i64),
     String(String),
 }
-
 impl Value {
     /// Compare two `Value`
     /// # Errors
     /// This can return an error when the two types of `Value` are not compatible.
     /// ie a String and a Number
-    pub fn compare(&self, other: &Value, op: &ComparisonOp) -> Result<bool, String> {
+    pub fn compare(&self, other: &Value, op: &ComparisonOp) -> Result<bool, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(op.compare(a.cmp(b))),
             (Value::String(a), Value::String(b)) => Ok(op.compare(a.cmp(b))),
-            _ => Err(format!("Invalid comparison between {self:?} and {other:?}")),
+            _ => Err(ValueError::TypeMismatch(self.clone(), other.clone())),
         }
     }
     /// Add two `Value` together
     /// # Errors
     /// Can return an error if you try to add a Number and a String
-    pub fn add(&self, other: &Value) -> Result<Value, String> {
+    pub fn add(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a + b)),
             (Value::String(a), Value::String(b)) => Ok(Value::String(format!("{a}{b}"))),
-            _ => Err("Cannot add Number and String".to_string()),
+            _ => Err(ValueError::TypeMismatch(self.clone(), other.clone())),
         }
     }
     /// For strings, when we subtract a positive number, it removes characters from the front.
@@ -64,7 +64,7 @@ impl Value {
     /// # Errors
     /// Can return an error when subtracting a number from a string, if the Number cannot be
     /// converted
-    pub fn sub(&self, other: &Value) -> Result<Value, String> {
+    pub fn sub(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a - b)),
             (Value::String(a), Value::Number(b)) => {
@@ -72,13 +72,13 @@ impl Value {
                 if *b >= 0 {
                     let skip_amount = match usize::try_from(b.unsigned_abs()) {
                         Ok(n) => n,
-                        Err(e) => return Err(format!("{e}")),
+                        Err(e) => return Err(ValueError::ConversionError(format!("{e}"))),
                     };
                     Ok(Value::String(a.chars().skip(skip_amount).collect()))
                 } else {
                     let abs_len = match usize::try_from(b.unsigned_abs()) {
                         Ok(n) => n,
-                        Err(e) => return Err(format!("{e}")),
+                        Err(e) => return Err(ValueError::ConversionError(format!("{e}"))),
                     };
                     if abs_len >= len {
                         Ok(Value::String(String::new()))
@@ -87,7 +87,9 @@ impl Value {
                     }
                 }
             }
-            _ => Err("Invalid subtraction".to_string()),
+            _ => Err(ValueError::InvalidOperation(
+                "Invalid subtraction".to_string(),
+            )),
         }
     }
     /// Multiplying a string and a number returns a string concatenated with itself
@@ -95,7 +97,7 @@ impl Value {
     /// If you multiply it by number less than or equal to zero, you will get an empty string
     /// # Errors
     /// Returns an error if you try to multiply two strings together
-    pub fn mul(&self, other: &Value) -> Result<Value, String> {
+    pub fn mul(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a * b)),
             (Value::String(a), Value::Number(b)) | (Value::Number(b), Value::String(a)) => {
@@ -105,7 +107,9 @@ impl Value {
                 }
                 Ok(Value::String(new_string))
             }
-            _ => Err("Invalid multiplication between two strings".to_string()),
+            _ => Err(ValueError::InvalidOperation(
+                "Invalid multiplication between two strings".to_string(),
+            )),
         }
     }
     /// Dividing two strings gives us the size difference between the two strings. Division between
@@ -114,13 +118,13 @@ impl Value {
     /// Returns an error if you try to divide by zero, or if you try to divide a String by a
     /// number. Can also return an error if trying to get the length of either String in a
     /// String/String div fails
-    pub fn div(&self, other: &Value) -> Result<Value, String> {
+    pub fn div(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => {
                 if *b > 0 {
                     Ok(Value::Number(a / b))
                 } else {
-                    Err(format!("Division denominator is zero in {a}/{b}"))
+                    Err(ValueError::DivisionByZero(*a, *b))
                 }
             }
             (Value::String(a), Value::String(b)) => {
@@ -128,51 +132,62 @@ impl Value {
                 let len_right = i64::try_from(b.chars().count());
                 match (len_left, len_right) {
                     (Ok(left), Ok(right)) => Ok(Value::Number(left - right)),
-                    (Ok(_), Err(e)) => Err(format!("Right value in div not valid: {e}")),
-                    (Err(e), Ok(_)) => Err(format!("Left value in div not valid: {e}")),
-                    (Err(e), Err(err)) => Err(format!("Multiple errors in div: {e}\n\n{err}")),
+                    (Ok(_), Err(e)) => Err(ValueError::ConversionError(format!(
+                        "Right value in div not valid: {e}"
+                    ))),
+                    (Err(e), Ok(_)) => Err(ValueError::ConversionError(format!(
+                        "Left value in div not valid: {e}"
+                    ))),
+                    (Err(e), Err(err)) => Err(ValueError::ConversionError(format!(
+                        "Multiple errors in div: {e}\n\n{err}"
+                    ))),
                 }
             }
-            _ => Err("Invalid division between number and string".to_string()),
+            _ => Err(ValueError::InvalidOperation(
+                "Invalid division between number and string".to_string(),
+            )),
         }
     }
     /// Logical AND on two numbers.
     /// # Errors
     /// Returns an error when String Values are supplied
-    pub fn and(&self, other: &Value) -> Result<Value, String> {
+    pub fn and(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => {
                 println!("A: {a}, B: {b}");
                 Ok(Value::Number(a & b))
             }
-            _ => Err("Invalid 'and'. Both arguments must be numbers ".to_string()),
+            _ => Err(ValueError::TypeMismatch(self.clone(), other.clone())),
         }
     }
     /// Logical OR on two numbers
     /// # Errors
     /// Returns an error when String Values are supplied
-    pub fn or(&self, other: &Value) -> Result<Value, String> {
+    pub fn or(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a | b)),
-            _ => Err("Invalid 'and'. Both arguments must be numbers.".to_string()),
+            _ => Err(ValueError::TypeMismatch(self.clone(), other.clone())),
         }
     }
     /// Logical XOR on two numbers
     /// # Errors
     /// Returns an error when String Values are supplied
-    pub fn xor(&self, other: &Value) -> Result<Value, String> {
+    pub fn xor(&self, other: &Value) -> Result<Value, ValueError> {
         match (self, other) {
             (Value::Number(a), Value::Number(b)) => Ok(Value::Number(a ^ b)),
-            _ => Err("Invalid 'xor'. Both arguments must be numbers.".to_string()),
+            _ => Err(ValueError::TypeMismatch(self.clone(), other.clone())),
         }
     }
     /// Logical NOT on two Numbers
     /// # Errors
     /// Returns an error when a String is supplied
-    pub fn not(&self) -> Result<Value, String> {
+    pub fn not(&self) -> Result<Value, ValueError> {
         match self {
             Value::Number(a) => Ok(Value::Number(!a)),
-            Value::String(a) => Err(format!("Invalid 'not' for '{a:?}'. Must be a number")),
+            Value::String(a) => Err(ValueError::TypeMismatch(
+                Value::String(a.clone()),
+                Value::Number(0),
+            )),
         }
     }
 }
